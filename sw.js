@@ -1,5 +1,5 @@
 /* 宝石棋离线缓存：页面网络优先（保证更新及时），音乐缓存优先（后台更新） */
-const V = 'gemchess-v3';
+const V = 'gemchess-v4';
 const SHELL = './';
 
 self.addEventListener('install', e => {
@@ -37,7 +37,15 @@ self.addEventListener('fetch', e => {
   }
 
   if (url.pathname.endsWith('/bgm.ogg')) {
-    /* 页面下载完会自己写缓存；这里只负责命中缓存，避免同时克隆一份大响应拖慢下载 */
-    e.respondWith(caches.match(req).then(hit => hit || fetch(req)));
+    /* 命中整份缓存就直接给（播放器能处理 200 响应）；
+       没命中就原样转发（保留 Range），缓存由页面在开播后后台补齐 */
+    e.respondWith((async () => {
+      const cache = await caches.open(V);
+      const hit = await cache.match(req, { ignoreSearch: true });
+      if (hit) return hit;
+      try { return await fetch(req); }
+      catch (err) { return new Response('', { status: 504 }); }
+    })());
+    return;
   }
 });

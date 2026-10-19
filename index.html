@@ -1893,24 +1893,23 @@ const Boot = {
     if (this.pct) this.pct.textContent = Math.round(v) + '%';
   },
   audioProgress(r){ this.audioRatio = Math.max(0, Math.min(1, r)); },
-  /* 进度条同时看“已下载比例”和“已经等了多久”：
-     快网按字节走；慢网按时间匀速走（约 0.45%/秒），不会卡在某个数字上干等。
-     下载阶段最高到 99%，最后 1% 留给解码和收尾 */
+  /* 核心就绪 = 30%；之后看音频缓冲比例和等待时间取大者，慢网也一直往前挪。
+     开头能播（canplay）就 100% 放行，剩下的边播边下 */
   tickStart(){
     if (this.tick) return;
     this.audioStart = performance.now();
     this.tick = setInterval(() => {
       if (this.done || this.audio) return;
       const el = (performance.now() - this.audioStart) / 1000;
-      const byBytes = 65 + 33 * this.audioRatio;     /* 下载完约 98% */
-      const byTime = 65 + 0.45 * el;                 /* 慢网也一直往前挪 */
+      const byBytes = 30 + 69 * this.audioRatio;     /* 缓冲够开播时接近 99% */
+      const byTime = 30 + 0.5 * el;                  /* 慢网也一直往前挪 */
       this.set(Math.min(99, Math.max(byBytes, byTime)));
     }, 120);
   },
   tickStop(){ if (this.tick){ clearInterval(this.tick); this.tick = null; } },
   coreReady(){
     this.core = true;
-    this.set(65);
+    this.set(30);
     this.tickStart();
     this.check();
   },
@@ -3160,6 +3159,7 @@ const Snd = {
 const BGM_EMBED = /*__BGM_EMBED__*/false;
 const Bgm = {
   vol: 50, gain: null, srcNode: null, buf: null, started: false, gone: false, fails: 0,
+  audioEl: null, stream: false,
   load(){
     try {
       const saved = localStorage.getItem('gemchess.music');
@@ -3206,60 +3206,69 @@ const Bgm = {
       } catch(e){ this.gone = true; done(); }
       return;
     }
-    /* 在线版：音乐是独立文件，页面加载后立即后台取。取到后自己写进离线缓存，
-       不依赖 Service Worker 是否已经接管本页（首次访问时它往往还没接管）。
-       缓存名与 sw.js 里的 V 保持一致 */
+    /* 在线版：用 <audio> 直接流式播放同一份 bgm.ogg。
+       浏览器只要缓冲到“能开播”就触发 canplay，这时就放行；剩下的边播边下，
+       不需要手动切片（媒体内核的缓冲比手写分片更稳，不会在接缝处卡顿）。
+       缓存由页面在后台补齐，SW 只负责命中 */
     this.started = true;
-    const cacheBgm = copy => {
+    this.stream = true;
+    const a = new Audio();
+    this.audioEl = a;
+    a.preload = 'auto';
+    a.loop = true;
+    a.volume = Math.min(1, this.curve(this.vol));
+    let released = false;
+    const release = () => { if (!released){ released = true; done(); } };
+    /* 开播后把整首下载完并写进 CacheStorage：媒体内核自己只维持很小一段缓冲，
+       后台补齐后，播放器后续取数据直接命中缓存，弱网抖动也不容易卡；
+       顺带把离线缓存填好 */
+    const fillCache = () => {
       try {
         if (!('caches' in window)) return;
         caches.match('bgm.ogg').then(hit => {
           if (hit) return;
-          caches.open('gemchess-v3').then(c => c.put('bgm.ogg',
-            new Response(copy, { headers: { 'Content-Type': 'audio/ogg' } })));
+          fetch('bgm.ogg').then(r => r.ok ? r.blob() : null).then(b => {
+            if (!b) return;
+            caches.open('gemchess-v4').then(c => c.put('bgm.ogg',
+              new Response(b, { headers: { 'Content-Type': 'audio/ogg', 'Content-Length': String(b.size) } })));
+          }).catch(() => {});
         }).catch(() => {});
       } catch(e){}
     };
-    const load = async () => {
+    a.addEventListener('loadedmetadata', () => {
+      /* 跳过开头约 1 秒的淡入，第一次播放不至于像没声 */
+      try { a.currentTime = 1.0; } catch(e){}
+    }, { once: true });
+    a.addEventListener('canplay', () => { release(); try { this.play(); } catch(e){} fillCache(); }, { once: true });
+    a.addEventListener('progress', () => {
       try {
-        const r = await fetch('bgm.ogg');
-        if (!r.ok) throw new Error('bgm ' + r.status);
-        const total = +r.headers.get('content-length') || 0;
-        let ab = null;
-        if (r.body && r.body.getReader && total){
-          /* 有长度就按字节报进度，进度条不是假动画 */
-          const reader = r.body.getReader();
-          const chunks = [];
-          let got = 0;
-          for (;;){
-            const step = await reader.read();
-            if (step.done) break;
-            chunks.push(step.value);
-            got += step.value.length;
-            try { Boot.audioProgress(Math.min(0.95, got / total)); } catch(e){}
-          }
-          const u8 = new Uint8Array(got);
-          let off = 0;
-          for (const c of chunks){ u8.set(c, off); off += c.length; }
-          ab = u8.buffer;
-        } else {
-          ab = await r.arrayBuffer();
-        }
-        try { Boot.audioProgress(0.97); } catch(e){}
-        /* decodeAudioData 会立刻分离原缓冲区，先留一份给缓存 */
-        const copy = ab.slice(0);
-        ctx.decodeAudioData(ab, buf => { this.buf = buf; this.play(); done(); }, () => { this.gone = true; done(); });
-        cacheBgm(copy);
-      } catch(e){
-        this.started = false;
-        this.fails = (this.fails || 0) + 1;
-        if (this.fails >= 3) this.gone = true;   /* 连续失败就不再每点一下重试 */
-        done();                                  /* 音乐失败也放行，不能把玩家困在加载页 */
-      }
-    };
-    load();
+        if (a.duration && a.buffered.length)
+          Boot.audioProgress(a.buffered.end(a.buffered.length - 1) / a.duration);
+      } catch(e){}
+    });
+    a.addEventListener('error', () => { this.gone = true; release(); }, { once: true });
+    /* 首次访问时等 SW 接管再发请求，音频才能顺带进离线缓存；最多等 1.2 秒 */
+    const start = () => { try { a.src = 'bgm.ogg'; a.load(); } catch(e){ this.gone = true; release(); } };
+    if ('serviceWorker' in navigator && navigator.serviceWorker.ready){
+      let fired = false;
+      const once = () => { if (!fired){ fired = true; start(); } };
+      const t = setTimeout(once, 1200);
+      if (navigator.serviceWorker.controller){ clearTimeout(t); once(); }
+      else navigator.serviceWorker.ready.then(() => { clearTimeout(t); once(); }, once);
+    } else {
+      start();
+    }
   },
   play(){
+    if (this.stream){
+      const a = this.audioEl; if (!a) return;
+      try {
+        a.volume = Math.min(1, this.curve(this.vol));
+        const p = a.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch(e){}
+      return;
+    }
     if (this.srcNode || !this.buf || !Snd.ctx) return;
     const ctx = Snd.ctx;
     /* 上下文没跑起来（浏览器自动播放限制）就先别建音源：
@@ -3289,6 +3298,11 @@ const Bgm = {
     const b = document.getElementById('musName');
     if (b) b.textContent = this.vol === 0 ? '静音' : this.pct(this.vol) + '%';
     try { localStorage.setItem('gemchess.music', String(this.vol)); localStorage.setItem('gemchess.musicV2', '1'); } catch(e){}
+    if (this.audioEl){
+      try { this.audioEl.volume = Math.min(1, this.curve(this.vol)); } catch(e){}
+      if (this.vol === 0){ try { this.audioEl.pause(); } catch(e){} }
+      else if (this.started){ try { this.play(); } catch(e){} }
+    }
     if (this.vol > 0) { try { this.boot(); } catch(e){} }   /* 从静音调大：这时才开始取音乐 */
   }
 };

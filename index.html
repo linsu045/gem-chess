@@ -1904,8 +1904,6 @@ const Boot = {
     this.core = true;
     this.set(65);
     this.creepStart();
-    /* 音频迟迟没有回报（没有音频上下文等）时，30 秒后也放行 */
-    setTimeout(() => { if (!this.audio) this.audioReady(); }, 30000);
     this.check();
   },
   audioReady(){

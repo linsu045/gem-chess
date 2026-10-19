@@ -37,14 +37,7 @@ self.addEventListener('fetch', e => {
   }
 
   if (url.pathname.endsWith('/bgm.ogg')) {
-    e.respondWith(
-      caches.match(req).then(hit => {
-        const net = fetch(req).then(r => {
-          if (r.ok) caches.open(V).then(c => c.put(req, r.clone()));
-          return r;
-        });
-        return hit || net;
-      })
-    );
+    /* 页面下载完会自己写缓存；这里只负责命中缓存，避免同时克隆一份大响应拖慢下载 */
+    e.respondWith(caches.match(req).then(hit => hit || fetch(req)));
   }
 });

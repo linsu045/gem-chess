@@ -606,8 +606,8 @@ body.bootLock{overflow:hidden}
       </div>
     </div>
     <div class="optgroup">
-      <div class="optlabel">电脑实力 <b id="diffName">高级</b></div>
-      <input class="rng" type="range" id="diffSeg" min="0" max="3" step="1" value="2" autocomplete="off"/>
+      <div class="optlabel">电脑实力 <b id="diffName">初级</b></div>
+      <input class="rng" type="range" id="diffSeg" min="0" max="3" step="1" value="0" autocomplete="off"/>
       <div class="rngends four"><span>初级</span><span>中级</span><span>高级</span><span>杀手</span></div>
     </div>
     <div class="optgroup">
@@ -1694,7 +1694,7 @@ function diffCfg(v){
     time:   [96, 535, 2750, 8000][v],              /* 思考预算 ms；前三档按 V8 实测提速比压缩，末档保持 8s */
     margin: [320, 90, 0, 0][v],                    /* 容错幅度（越强越不手滑） */
     rnd:    [0.12, 0.03, 0, 0][v],                 /* 随手棋概率（中低档保留"呆"味） */
-    push:   [150, 40, 0, 0][v],                    /* 低档的推进执念 */
+    push:   [75, 20, 0, 0][v],                     /* 低档的推进执念（初/中莽撞减半） */
     ext:    [16, 16, 96, 160][v]                   /* 残局加深预算（高级沿用旧杀手的 96） */
   };
 }
@@ -1893,7 +1893,7 @@ const Boot = {
     if (this.pct) this.pct.textContent = Math.round(v) + '%';
   },
   audioProgress(r){ this.audioRatio = Math.max(0, Math.min(1, r)); },
-  /* 核心就绪 = 30%；之后看音频缓冲比例和等待时间取大者，慢网也一直往前挪。
+  /* 核心就绪 = 90%；之后看音频缓冲比例和等待时间取大者，慢网也一直往前挪。
      开头能播（canplay）就 100% 放行，剩下的边播边下 */
   tickStart(){
     if (this.tick) return;
@@ -1901,15 +1901,15 @@ const Boot = {
     this.tick = setInterval(() => {
       if (this.done || this.audio) return;
       const el = (performance.now() - this.audioStart) / 1000;
-      const byBytes = 30 + 69 * this.audioRatio;     /* 缓冲够开播时接近 99% */
-      const byTime = 30 + 0.5 * el;                  /* 慢网也一直往前挪 */
+      const byBytes = 90 + 9 * this.audioRatio;      /* 缓冲够开播时接近 99% */
+      const byTime = 90 + 0.08 * el;                 /* 慢网也一直往前挪 */
       this.set(Math.min(99, Math.max(byBytes, byTime)));
     }, 120);
   },
   tickStop(){ if (this.tick){ clearInterval(this.tick); this.tick = null; } },
   coreReady(){
     this.core = true;
-    this.set(30);
+    this.set(90);
     this.tickStart();
     this.check();
   },
@@ -2094,7 +2094,7 @@ function pieceDream(side, kind, form){
 }
 /* ---------------- 状态 ---------------- */
 const U = {
-  st:null, mode:'ai', diff:2, humanSide:RED, aiSide:BLUE,
+  st:null, mode:'ai', diff:0, humanSide:RED, aiSide:BLUE,
   sel:null, moves:[], busy:false, over:false, pending:null,
   hist:[], log:[], cell:46, pad:30, pe:new Map(), hints:[], flyHints:{},
   worker:null, workerReady:false, ask:null, gen:0,

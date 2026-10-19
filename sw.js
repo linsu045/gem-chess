@@ -23,8 +23,10 @@ self.addEventListener('fetch', e => {
   if (url.origin !== location.origin) return;
 
   if (req.mode === 'navigate') {
+    /* 绕过 HTTP 缓存取最新页面：GitHub Pages 给 HTML 设了 10 分钟缓存，
+       否则刚更新的版本可能十分钟内都看不到 */
     e.respondWith(
-      fetch(req).then(r => {
+      fetch(req, { cache: 'no-store' }).then(r => {
         if (r.ok) caches.open(V).then(c => c.put(SHELL, r.clone()));
         return r;
       }).catch(() =>

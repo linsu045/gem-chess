@@ -3207,9 +3207,9 @@ const Bgm = {
       return;
     }
     /* 在线版：用 <audio> 直接流式播放同一份 bgm.ogg。
-       浏览器只要缓冲到“能开播”就触发 canplay，这时就放行；剩下的边播边下，
-       不需要手动切片（媒体内核的缓冲比手写分片更稳，不会在接缝处卡顿）。
-       缓存由页面在后台补齐，SW 只负责命中 */
+       浏览器只要缓冲到“能开播”就触发 canplay，这时就放行；剩下的边播边下。
+       注意别再另开一个全量下载去抢带宽——媒体内核自己只要约 1–2 秒的缓冲，
+       再并行拉整首会把带宽吃光，反而让播放卡住 */
     this.started = true;
     this.stream = true;
     const a = new Audio();
@@ -3219,27 +3219,11 @@ const Bgm = {
     a.volume = Math.min(1, this.curve(this.vol));
     let released = false;
     const release = () => { if (!released){ released = true; done(); } };
-    /* 开播后把整首下载完并写进 CacheStorage：媒体内核自己只维持很小一段缓冲，
-       后台补齐后，播放器后续取数据直接命中缓存，弱网抖动也不容易卡；
-       顺带把离线缓存填好 */
-    const fillCache = () => {
-      try {
-        if (!('caches' in window)) return;
-        caches.match('bgm.ogg').then(hit => {
-          if (hit) return;
-          fetch('bgm.ogg').then(r => r.ok ? r.blob() : null).then(b => {
-            if (!b) return;
-            caches.open('gemchess-v4').then(c => c.put('bgm.ogg',
-              new Response(b, { headers: { 'Content-Type': 'audio/ogg', 'Content-Length': String(b.size) } })));
-          }).catch(() => {});
-        }).catch(() => {});
-      } catch(e){}
-    };
     a.addEventListener('loadedmetadata', () => {
       /* 跳过开头约 1 秒的淡入，第一次播放不至于像没声 */
       try { a.currentTime = 1.0; } catch(e){}
     }, { once: true });
-    a.addEventListener('canplay', () => { release(); try { this.play(); } catch(e){} fillCache(); }, { once: true });
+    a.addEventListener('canplay', () => { release(); try { this.play(); } catch(e){} }, { once: true });
     a.addEventListener('progress', () => {
       try {
         if (a.duration && a.buffered.length)

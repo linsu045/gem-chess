@@ -512,9 +512,47 @@ body.mobile .segmented.vert button{width:auto;flex:1 1 44%;text-align:center;pad
 body.mobile .boardCol{order:-1}
 body.mobile #log{display:none}
 body.mobile .card{padding:10px 11px}
+/* ---------- 启动加载遮罩：核心与音乐都就绪后再放行 ---------- */
+#bootOverlay{position:fixed;inset:0;z-index:100000;background:#05070c;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  color:var(--txt);transition:opacity .35s ease;cursor:default;
+  -webkit-user-select:none;user-select:none;touch-action:none}
+#bootOverlay.hide{opacity:0;pointer-events:none}
+.bootTitle{font-size:17px;letter-spacing:6px;color:var(--gold);text-shadow:0 0 18px rgba(255,209,102,.25)}
+.bootTrack{width:min(260px,70vw);height:6px;border-radius:99px;background:#141b27;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(120,150,200,.12)}
+#bootFill{display:block;height:100%;width:0;border-radius:99px;
+  background:linear-gradient(90deg,#bfffe0,#39ff9e 45%,#ffd166);
+  box-shadow:0 0 12px rgba(57,255,158,.35);transition:width .25s ease}
+#bootPct{font-size:12px;color:var(--dim);letter-spacing:1px;font-variant-numeric:tabular-nums}
+body.bootLock{overflow:hidden}
 </style>
 </head>
 <body>
+<div id="bootOverlay" aria-live="polite">
+  <div class="bootTitle">游戏加载中</div>
+  <div class="bootTrack"><i id="bootFill"></i></div>
+  <div id="bootPct">0%</div>
+</div>
+<script>
+/* 加载期间拦截一切输入：遮罩盖住页面 + 捕获阶段吞掉事件 */
+(function(){
+  document.body.classList.add('bootLock');
+  var block = function(e){ e.preventDefault(); e.stopImmediatePropagation(); };
+  var types = ['pointerdown','pointerup','mousedown','mouseup','touchstart','touchmove','touchend','click','keydown','keyup','wheel'];
+  types.forEach(function(t){ window.addEventListener(t, block, true); });
+  window.__bootUnblock = function(){
+    types.forEach(function(t){ window.removeEventListener(t, block, true); });
+    document.body.classList.remove('bootLock');
+  };
+  /* 兜底：万一主脚本没跑完，60 秒后也放行，不能永远卡在加载页 */
+  setTimeout(function(){
+    var o = document.getElementById('bootOverlay');
+    if (o){ o.classList.add('hide'); setTimeout(function(){ o.style.display = 'none'; }, 400); }
+    try { window.__bootUnblock(); } catch(e){}
+  }, 60000);
+})();
+</script>
 <svg id="defs" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true"><defs>
   <!-- 全部用「圆心正落在棋子正中」的径向渐变：横向、纵向都严格对称。
        色阶刻意压得很窄（没有刺眼的白心，也没有发黑的边），整体是朦胧的太空质感 -->
@@ -1837,6 +1875,58 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typ
    界面层
    ===================================================================== */
 const $ = s => document.querySelector(s);
+/* ---------- 启动加载遮罩：核心与音乐都就绪后再放行 ---------- */
+const Boot = {
+  el: null, fill: null, pct: null, v: 0, core: false, audio: false, done: false, creep: null,
+  init(){
+    this.el = document.getElementById('bootOverlay');
+    this.fill = document.getElementById('bootFill');
+    this.pct = document.getElementById('bootPct');
+    this.set(12);
+  },
+  set(v){
+    v = Math.max(0, Math.min(100, v));
+    if (v < this.v) return;
+    this.v = v;
+    if (this.fill) this.fill.style.width = v + '%';
+    if (this.pct) this.pct.textContent = Math.round(v) + '%';
+  },
+  audioProgress(r){ this.set(65 + 31 * Math.max(0, Math.min(1, r))); },
+  creepStart(){
+    if (this.creep) return;
+    this.creep = setInterval(() => {
+      if (this.done || this.audio) return;
+      if (this.v < 90) this.set(this.v + Math.max(0.35, (90 - this.v) * 0.012));
+    }, 180);
+  },
+  creepStop(){ if (this.creep){ clearInterval(this.creep); this.creep = null; } },
+  coreReady(){
+    this.core = true;
+    this.set(65);
+    this.creepStart();
+    /* 音频迟迟没有回报（没有音频上下文等）时，30 秒后也放行 */
+    setTimeout(() => { if (!this.audio) this.audioReady(); }, 30000);
+    this.check();
+  },
+  audioReady(){
+    if (this.audio) return;
+    this.audio = true;
+    this.creepStop();
+    this.set(100);
+    this.check();
+  },
+  check(){ if (this.core && this.audio && !this.done) this.finish(); },
+  finish(){
+    this.done = true;
+    this.set(100);
+    setTimeout(() => {
+      if (this.el) this.el.classList.add('hide');
+      try { if (window.__bootUnblock) window.__bootUnblock(); } catch(e){}
+      setTimeout(() => { if (this.el) this.el.style.display = 'none'; }, 380);
+    }, 200);
+  }
+};
+Boot.init();
 const REDC = { f:'#d0342c', f2:'#9d1f18', s:'#ffb0a8', d:'#6f1710' };
 const BKDC = { f:'#242a38', f2:'#0e121b', s:'#a9b8d6', d:'#05070c' };
 
@@ -3091,21 +3181,23 @@ const Bgm = {
   boot(){                                  /* 音频上下文就绪后调用（首次用户操作时） */
     if (this.started || this.gone) return;
     const ctx = Snd.ctx; if (!ctx) return;
-    if (this.vol === 0) return;            /* 静音时不下载也不解码，调大音量时再取 */
+    const done = () => { try { Boot.audioReady(); } catch(e){} };
+    if (this.vol === 0){ Boot.audioReady(); return; }   /* 静音时不下载也不解码，调大音量时再取 */
     if (BGM_EMBED){
       const el = document.getElementById('bgm-src');
       /* 单文件版把音频块放在页面末尾：正文还没解析到那里时元素不存在，
          先原样返回，等 DOMContentLoaded 再取，不能当成“没有音乐” */
       if (!el) return;
       const b64 = el.textContent.replace(/\s+/g, '');
-      if (!b64){ this.gone = true; return; }
+      if (!b64){ this.gone = true; done(); return; }
       this.started = true;
+      try { Boot.audioProgress(0.9); } catch(e){}
       try {
         const bin = atob(b64);
         const u8 = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-        ctx.decodeAudioData(u8.buffer, buf => { this.buf = buf; this.play(); }, () => { this.gone = true; });
-      } catch(e){ this.gone = true; }
+        ctx.decodeAudioData(u8.buffer, buf => { this.buf = buf; this.play(); done(); }, () => { this.gone = true; done(); });
+      } catch(e){ this.gone = true; done(); }
       return;
     }
     /* 在线版：音乐是独立文件，页面加载后立即后台取。取到后自己写进离线缓存，
@@ -3117,24 +3209,49 @@ const Bgm = {
         if (!('caches' in window)) return;
         caches.match('bgm.ogg').then(hit => {
           if (hit) return;
-          caches.open('gemchess-v1').then(c => c.put('bgm.ogg',
+          caches.open('gemchess-v2').then(c => c.put('bgm.ogg',
             new Response(copy, { headers: { 'Content-Type': 'audio/ogg' } })));
         }).catch(() => {});
       } catch(e){}
     };
-    fetch('bgm.ogg').then(r => {
-      if (!r.ok) throw new Error('bgm ' + r.status);
-      return r.arrayBuffer();
-    }).then(ab => {
-      /* decodeAudioData 会立刻分离原缓冲区，先留一份给缓存 */
-      const copy = ab.slice(0);
-      ctx.decodeAudioData(ab, buf => { this.buf = buf; this.play(); }, () => { this.gone = true; });
-      cacheBgm(copy);
-    }).catch(() => {
-      this.started = false;
-      this.fails = (this.fails || 0) + 1;
-      if (this.fails >= 3) this.gone = true;   /* 连续失败就不再每点一下重试 */
-    });
+    const load = async () => {
+      try {
+        const r = await fetch('bgm.ogg');
+        if (!r.ok) throw new Error('bgm ' + r.status);
+        const total = +r.headers.get('content-length') || 0;
+        let ab = null;
+        if (r.body && r.body.getReader && total){
+          /* 有长度就按字节报进度，进度条不是假动画 */
+          const reader = r.body.getReader();
+          const chunks = [];
+          let got = 0;
+          for (;;){
+            const step = await reader.read();
+            if (step.done) break;
+            chunks.push(step.value);
+            got += step.value.length;
+            try { Boot.audioProgress(Math.min(0.95, got / total)); } catch(e){}
+          }
+          const u8 = new Uint8Array(got);
+          let off = 0;
+          for (const c of chunks){ u8.set(c, off); off += c.length; }
+          ab = u8.buffer;
+        } else {
+          ab = await r.arrayBuffer();
+        }
+        try { Boot.audioProgress(0.97); } catch(e){}
+        /* decodeAudioData 会立刻分离原缓冲区，先留一份给缓存 */
+        const copy = ab.slice(0);
+        ctx.decodeAudioData(ab, buf => { this.buf = buf; this.play(); done(); }, () => { this.gone = true; done(); });
+        cacheBgm(copy);
+      } catch(e){
+        this.started = false;
+        this.fails = (this.fails || 0) + 1;
+        if (this.fails >= 3) this.gone = true;   /* 连续失败就不再每点一下重试 */
+        done();                                  /* 音乐失败也放行，不能把玩家困在加载页 */
+      }
+    };
+    load();
   },
   play(){
     if (this.srcNode || !this.buf || !Snd.ctx) return;
@@ -3908,7 +4025,8 @@ function wire(){
   /* 页面解析完再准备音频：在线版此时开始后台下载独立音乐；
      单文件版的音频块在页面末尾，到这里才可读。棋盘渲染不受影响 */
   document.addEventListener('DOMContentLoaded', () => {
-    try { Snd.init(); Bgm.boot(); } catch(e){}
+    try { Snd.init(); Bgm.boot(); } catch(e){ try { Boot.audioReady(); } catch(_){} }
+    if (!Snd.ctx){ try { Boot.audioReady(); } catch(e){} }
   });
   window.addEventListener('pointerdown', kickSnd, true);
   window.addEventListener('keydown', kickSnd, true);
@@ -3987,6 +4105,7 @@ function boot(){
   wire();
   askLayoutFirstTime();
   setStatus('红方先行：点击自己的棋子，再点白点落子');
+  Boot.coreReady();
 }
 boot();
 /* 在线版注册离线缓存（页面与音乐，第二次打开可秒开、断网也能玩）；

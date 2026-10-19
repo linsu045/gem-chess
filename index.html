@@ -1895,16 +1895,16 @@ const Boot = {
   audioProgress(r){ this.audioRatio = Math.max(0, Math.min(1, r)); },
   /* 进度条同时看“已下载比例”和“已经等了多久”：
      快网按字节走；慢网按时间匀速走（约 0.45%/秒），不会卡在某个数字上干等。
-     下载阶段最高只到 94%，剩下的留给解码和收尾，最后一段很快就走完 */
+     下载阶段最高到 99%，最后 1% 留给解码和收尾 */
   tickStart(){
     if (this.tick) return;
     this.audioStart = performance.now();
     this.tick = setInterval(() => {
       if (this.done || this.audio) return;
       const el = (performance.now() - this.audioStart) / 1000;
-      const byBytes = 65 + 28 * this.audioRatio;     /* 下载完约 93% */
+      const byBytes = 65 + 33 * this.audioRatio;     /* 下载完约 98% */
       const byTime = 65 + 0.45 * el;                 /* 慢网也一直往前挪 */
-      this.set(Math.min(94, Math.max(byBytes, byTime)));
+      this.set(Math.min(99, Math.max(byBytes, byTime)));
     }, 120);
   },
   tickStop(){ if (this.tick){ clearInterval(this.tick); this.tick = null; } },

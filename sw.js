@@ -1,5 +1,5 @@
 /* 宝石棋离线缓存：页面网络优先（保证更新及时），音乐缓存优先（后台更新） */
-const V = 'gemchess-v2';
+const V = 'gemchess-v3';
 const SHELL = './';
 
 self.addEventListener('install', e => {

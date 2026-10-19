@@ -3091,6 +3091,7 @@ const Bgm = {
   boot(){                                  /* 音频上下文就绪后调用（首次用户操作时） */
     if (this.started || this.gone) return;
     const ctx = Snd.ctx; if (!ctx) return;
+    if (this.vol === 0) return;            /* 静音时不下载也不解码，调大音量时再取 */
     if (BGM_EMBED){
       const el = document.getElementById('bgm-src');
       /* 单文件版把音频块放在页面末尾：正文还没解析到那里时元素不存在，
@@ -3156,6 +3157,7 @@ const Bgm = {
     const b = document.getElementById('musName');
     if (b) b.textContent = this.vol === 0 ? '静音' : this.pct(this.vol) + '%';
     try { localStorage.setItem('gemchess.music', String(this.vol)); localStorage.setItem('gemchess.musicV2', '1'); } catch(e){}
+    if (this.vol > 0) { try { this.boot(); } catch(e){} }   /* 从静音调大：这时才开始取音乐 */
   }
 };
 /* =====================================================================

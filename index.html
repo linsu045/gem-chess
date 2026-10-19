@@ -3232,7 +3232,8 @@ const Bgm = {
     });
     a.addEventListener('error', () => { this.gone = true; release(); }, { once: true });
     /* 首次访问时等 SW 接管再发请求，音频才能顺带进离线缓存；最多等 1.2 秒 */
-    const start = () => { try { a.src = 'bgm.ogg'; a.load(); } catch(e){ this.gone = true; release(); } };
+    /* 带版本参数，避免浏览器继续用旧的音频 HTTP 缓存（换音频时把 v 往上加） */
+    const start = () => { try { a.src = 'bgm.ogg?v=2'; a.load(); } catch(e){ this.gone = true; release(); } };
     if ('serviceWorker' in navigator && navigator.serviceWorker.ready){
       let fired = false;
       const once = () => { if (!fired){ fired = true; start(); } };
